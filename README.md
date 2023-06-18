@@ -1,2 +1,3 @@
 # UMake
-The ultimate build system, that lets U build Ur programs
+
+The ultimate build system, which _finally_ lets U build Ur programs
