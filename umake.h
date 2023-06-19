@@ -60,6 +60,7 @@ extern "C" {
         #undef UMAKE_ON_WINDOWS
     #endif
     #define UMAKE_ON_WINDOWS 1
+    #include <windows.h>
 #elif (defined(__linux__) || defined(__unix__)) && !(defined(__APPLE__) || defined(__ANDROID__))
     #if defined(UMAKE_ON_LINUX)
         #warning "UMAKE_ON_LINUX is already defined, undefining it"
@@ -67,12 +68,27 @@ extern "C" {
     #endif
     #define UMAKE_ON_LINUX 1
     #define _GNU_SOURCE 1
+    #if !defined(_FORTIFY_SOURCE)
+        #define _FORTIFY_SOURCE 2
+    #endif
+    #include <sys/types.h>
+    #include <sys/stat.h>
+    #include <dirent.h>
+    #include <unistd.h>
 #elif defined(__APPLE__)
     #if defined(UMAKE_ON_APPLE)
         #warning "UMAKE_ON_APPLE is already defined, undefining it"
         #undef UMAKE_ON_APPLE
     #endif
     #define UMAKE_ON_APPLE 1
+    #define _GNU_SOURCE 1
+    #if !defined(_FORTIFY_SOURCE)
+        #define _FORTIFY_SOURCE 2
+    #endif
+    #include <sys/types.h>
+    #include <sys/stat.h>
+    #include <dirent.h>
+    #include <unistd.h>
 #else
     #error "Unsupported platform"
 #endif
@@ -180,6 +196,9 @@ extern "C" {
 #if defined(UMAKE_FUNC_NON_NULL)
     #undef UMAKE_FUNC_NON_NULL
 #endif
+#if defined(UMAKE_FUNC_MALLOC)
+    #undef UMAKE_FUNC_MALLOC
+#endif
 #if defined(UMAKE_WITH_GCC)
     #define UMAKE_PRAGMA(...) _Pragma(UMAKE_STR(__VA_ARGS__))
     #define UMAKE_ERROR(msg) UMAKE_PRAGMA(GCC error msg)
@@ -187,6 +206,7 @@ extern "C" {
     #define UMAKE_DIAG_POP(...) UMAKE_PRAGMA(GCC diagnostic pop)
     #define UMAKE_FUNC_WARNING(msg) __attribute__((warning(msg)))
     #define UMAKE_FUNC_NON_NULL(...) __attribute__((nonnull(__VA_ARGS__)))
+    #define UMAKE_FUNC_MALLOC __attribute__((malloc))
 #elif defined(UMAKE_WITH_MSVC)
     #define UMAKE_PRAGMA(...) __pragma(__VA_ARGS__)
     #define UMAKE_ERROR(msg) UMAKE_PRAGMA(message(__FILE__ "(" UMAKE_STR(__LINE__) "): error: " msg))
@@ -194,6 +214,7 @@ extern "C" {
     #define UMAKE_DIAG_POP(...) UMAKE_PRAGMA(warning(pop))
     #define UMAKE_FUNC_WARNING(msg) __pragma(message(__FILE__ "(" UMAKE_STR(__LINE__) "): warning: " msg))
     #define UMAKE_FUNC_NON_NULL(...)
+    #define UMAKE_FUNC_MALLOC
 #elif defined(UMAKE_WITH_CLANG)
     #define UMAKE_PRAGMA(...) _Pragma(UMAKE_STR(__VA_ARGS__))
     #define UMAKE_ERROR(msg) UMAKE_PRAGMA(clang error msg)
@@ -201,6 +222,7 @@ extern "C" {
     #define UMAKE_DIAG_POP(...) UMAKE_PRAGMA(clang diagnostic pop)
     #define UMAKE_FUNC_WARNING(msg) __attribute__((warning(msg)))
     #define UMAKE_FUNC_NON_NULL(...) __attribute__((nonnull(__VA_ARGS__)))
+    #define UMAKE_FUNC_MALLOC __attribute__((malloc))
 #else
     #define UMAKE_PRAGMA(...) _Pragma(UMAKE_STR(__VA_ARGS__))
     #define UMAKE_ERROR(msg)
@@ -208,6 +230,7 @@ extern "C" {
     #define UMAKE_DIAG_POP(...)
     #define UMAKE_FUNC_WARNING(msg)
     #define UMAKE_FUNC_NON_NULL(...)
+    #define UMAKE_FUNC_MALLOC
 #endif
 
 #if defined(UMAKE_STR)
@@ -434,6 +457,15 @@ static_assert(UMAKE_ARGC(a) == 1, "UMAKE_ARGC(a) should be 1");
 static_assert(UMAKE_ARGC(a, b) == 2, "UMAKE_ARGC(a, b) should be 2");
 static_assert(UMAKE_ARGC(a, b, c, d, e, f ,g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z) == 26, "UMAKE_ARGC(<all letters>) should be 26");
 
+#if defined(UMAKE_UNIMPLEMENTED)
+    #undef UMAKE_UNIMPLEMENTED
+#endif
+#if defined(__INTELLISENSE__)
+    #define UMAKE_UNIMPLEMENTED(func_name) UMAKE_ASSERT(0)
+#else
+    #define UMAKE_UNIMPLEMENTED(func_name) UMAKE_ASSERT(0 && (func_name " is not implemented"))
+#endif
+
 #if defined(UMAKE_CONCAT_2_)
     #undef UMAKE_CONCAT_2_
 #endif
@@ -549,6 +581,19 @@ static_assert(UMAKE_ARGC(a, b, c, d, e, f ,g, h, i, j, k, l, m, n, o, p, q, r, s
 #endif
 #define UMAKE_CONCAT_10_REDIRECT(x, y, z, w, v, u, t, s, r, q) UMAKE_CONCAT_2(x, UMAKE_CONCAT_9(y, z, w, v, u, t, s, r, q))
 
+#if defined(UMAKE_EQ)
+    #undef UMAKE_EQ
+#endif
+#define UMAKE_EQ(x, y) UMAKE_EQ_REDIRECT(x, y)
+
+#if defined(UMAKE_EQ_REDIRECT)
+    #undef UMAKE_EQ_REDIRECT
+#endif
+#define UMAKE_EQ_REDIRECT(x, y) UMAKE_CONCAT(UMAKE_EQ_, x, _, y)
+
+// Contains a whole bunch of generated macros
+#include "umake_generated.h"
+
 #include <stddef.h>
 #include <stdlib.h>
 #if !defined(__cplusplus) && C_STD >= 1999 && C_STD < 2023
@@ -574,34 +619,38 @@ static_assert(UMAKE_ARGC(a, b, c, d, e, f ,g, h, i, j, k, l, m, n, o, p, q, r, s
     #define UMAKE_CALLOC calloc
 #endif
 
-typedef struct UMake_C_String {
+/* * * * * * * *
+ * UMAKE TYPES *
+ * * * * * * * */
+
+/**
+ * @brief Basic "string" type.
+ */
+typedef struct UMake_C_String 
+{
     char *data;
     size_t length;
-    bool allocated;
 } UM_CStr;
 
-typedef struct UMake_C_String_List_Node {
-    UM_CStr data;
-    struct UMake_C_String_List_Node *next, *prev;
-} UM_CStrListNode;
-
-typedef struct UMake_C_String_List 
+/**
+ * @brief Basic "file" type.
+ */
+typedef struct UMake_File
 {
-    UM_CStrListNode *first, *last;
-} UM_CStrList;
+    UM_CStr path;
+} UM_File;
 
-thread_local static UM_CStrList umake_cstr_list = {NULL, NULL};
+/* * * * * * * * * *
+ * UMAKE FUNCTIONS *
+ * * * * * * * * * */
 
-/* bool umake_register_cstr(UM_CStr *cstr)
-{
-    if (!cstr) return false;
-    if (!umake_cstr_list.first) {
-        umake_cstr_list.first = cstr;
-        umake_cstr_list.last = cstr;
-        return true;
-    }
-    umake_cstr_list.last->next
-} */
+UMAKE_FUNC_NON_NULL(1)
+static UM_CStr umake_cstr_new(const char *str);
+static void umake_cstr_free(UM_CStr *cstr);
+UMAKE_FUNC_NON_NULL(3)
+static UM_File* umake_get_files(const UM_CStr *paths, size_t path_count, size_t* file_count);
+UMAKE_FUNC_NON_NULL(1)
+static char* umake_get_superdir(const char* path);
 
 UMAKE_FUNC_NON_NULL(1)
 static UM_CStr umake_cstr_new(const char *str)
@@ -619,17 +668,76 @@ static UM_CStr umake_cstr_new(const char *str)
     if (!result.data) return UMAKE_CSTR_NULL;
     memcpy(result.data, str, result.length);
     result.data[result.length] = '\0';
-    result.allocated = true;
     return result;
 }
 
-/* typedef struct command_target_t {
-    const char *name;
-    const char *description;
-    int (*callback)(int argc, char **argv);
-} command_target_t; */
+static void umake_cstr_free(UM_CStr *cstr)
+{
+    if (!cstr) return;
+    UMAKE_FREE(cstr->data);
+    cstr->data = NULL;
+    cstr->length = 0;
+}
 
+UMAKE_FUNC_NON_NULL(3)
+static UM_File* umake_get_files(const UM_CStr *paths, size_t path_count, size_t* file_count)
+{
+#if !defined(UMAKE_WITH_MSVC)
+    UMAKE_DIAG_IGNORE("-Wnonnull-compare")
+#endif
+    if (!paths || !file_count || !path_count) return NULL;
+#if !defined(UMAKE_WITH_MSVC)
+    UMAKE_DIAG_POP()
+#endif
+    *file_count = 0;
+    size_t glob_count[path_count];
+    size_t* glob_positions[path_count];
+    memset(glob_count, 0, sizeof(glob_count));
+    memset(glob_positions, 0, sizeof(glob_positions));
 
+    for (size_t i = 0; i < path_count; ++i)
+    {
+        size_t curr_ch_pos = 0;
+        char* curr_ch = paths[i].data;
+        while (curr_ch_pos <= paths[i].length && (curr_ch = strchr(curr_ch, '*')))
+        {
+            ++glob_count[i];
+            curr_ch_pos = (size_t) (curr_ch - paths[i].data);
+            glob_positions[i] = UMAKE_REALLOC(glob_positions[i], sizeof(size_t) * glob_count[i]);
+            if (!glob_positions[i]) return NULL;
+            glob_positions[i][glob_count[i] - 1] = curr_ch_pos;
+            ++curr_ch;
+        }
+    }
+
+    UMAKE_UNIMPLEMENTED(__func__);
+}
+
+UMAKE_FUNC_NON_NULL(1)
+static char* umake_get_superdir(const char* path)
+{
+#if !defined(UMAKE_WITH_MSVC)
+    UMAKE_DIAG_IGNORE("-Wnonnull-compare")
+#endif
+    if (!path) return NULL;
+#if !defined(UMAKE_WITH_MSVC)
+    UMAKE_DIAG_POP()
+#endif
+    char* where_to_cut = strrchr(path, '/');
+    if (!where_to_cut) where_to_cut = strrchr(path, '\\');
+    if (!where_to_cut) 
+    {
+        // Get full path, and then cut
+#if defined(UMAKE_ON_WINDOWS)
+        UMAKE_UNIMPLEMENTED(__func__);
+        return NULL;
+#else
+        UMAKE_UNIMPLEMENTED(__func__);
+        return NULL;
+#endif
+    }
+    UMAKE_UNIMPLEMENTED(__func__);
+}
 
 #if defined(__cplusplus)
 }
